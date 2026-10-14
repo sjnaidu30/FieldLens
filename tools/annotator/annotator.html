@@ -1,0 +1,1551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multimeter Annotation Tool</title>
+<style>
+* {
+   box-sizing: border-box;
+}
+body {
+   margin: 0;
+   background: #151515;
+   color: white;
+   font-family: Arial, sans-serif;
+   height: 100vh;
+   display: flex;
+   flex-direction: column;
+}
+/* ---------- TOP BAR ---------- */
+header {
+   background: #222;
+   border-bottom: 1px solid #444;
+   padding: 12px;
+}
+h2 {
+   margin: 0 0 10px 0;
+   font-size: 20px;
+}
+.toolbar {
+   display: flex;
+   align-items: center;
+   gap: 8px;
+   flex-wrap: wrap;
+}
+button,
+select {
+   background: #333;
+   color: white;
+   border: 1px solid #555;
+   border-radius: 6px;
+   padding: 9px 12px;
+   cursor: pointer;
+}
+button:hover {
+   background: #444;
+}
+.primary {
+   background: #1674b8;
+}
+.primary:hover {
+   background: #218bd2;
+}
+#status {
+   margin-top: 8px;
+   color: #bbb;
+   font-size: 13px;
+}
+
+/* ---------- MAIN ---------- */
+main {
+   flex: 1;
+   min-height: 0;
+   display: flex;
+}
+
+/* ---------- SIDEBAR ---------- */
+#sidebar {
+   width: 260px;
+   background: #1e1e1e;
+   border-right: 1px solid #444;
+   display: flex;
+   flex-direction: column;
+   padding: 10px;
+}
+#progress {
+   font-weight: bold;
+   margin-bottom: 10px;
+}
+#fileList {
+   flex: 1;
+   overflow-y: auto;
+   border: 1px solid #444;
+   border-radius: 6px;
+}
+.fileItem {
+   padding: 8px;
+   border-bottom: 1px solid #333;
+   font-size: 12px;
+   cursor: pointer;
+}
+.fileItem:hover {
+   background: #303030;
+}
+.fileItem.active {
+   background: #175a87;
+}
+.fileItem.saved {
+   color: #70e070;
+}
+
+/* ---------- IMAGE AREA ---------- */
+#viewer {
+   flex: 1;
+   min-width: 0;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   background: #0e0e0e;
+   overflow: auto;
+   padding: 15px;
+}
+#canvas {
+   display: block;
+   box-shadow:
+       0 0 0 1px #555;
+}
+
+/* ---------- BOTTOM ---------- */
+footer {
+   background: #222;
+   border-top: 1px solid #444;
+   padding: 8px 12px;
+   display: flex;
+   justify-content: space-between;
+   font-size: 13px;
+   gap: 10px;
+}
+#boxInfo {
+   color: #ddd;
+}
+.help {
+   color: #999;
+}
+</style>
+</head>
+<body>
+
+<header>
+<h2>Multimeter Annotation Tool</h2>
+<div class="toolbar">
+<!-- SELECT WHOLE IMAGE FOLDER -->
+<input
+       id="folderInput"
+       type="file"
+       accept="image/*"
+       webkitdirectory
+       multiple
+>
+
+<!-- LABEL -->
+<select id="labelSelect">
+<option value="multimeter">
+           multimeter
+</option>
+<option value="display">
+           display
+</option>
+</select>
+
+<!-- NAVIGATION -->
+<button id="previousButton">
+       ← Previous
+</button>
+<button id="nextButton">
+       Next →
+</button>
+
+<!-- SAVE -->
+<button
+       id="saveButton"
+       class="primary"
+>
+       Save
+</button>
+<button
+       id="saveNextButton"
+       class="primary"
+>
+       Save & Next
+</button>
+
+<!-- EDIT -->
+<button id="deleteButton">
+       Delete Box
+</button>
+<button id="undoButton">
+       Undo
+</button>
+<button id="clearButton">
+       Clear
+</button>
+
+<!-- DOWNLOAD -->
+<button id="downloadButton">
+       Download All
+</button>
+</div>
+
+<div id="status">
+   Select your RAW images folder to begin.
+</div>
+</header>
+
+<main>
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+<div id="progress">
+       0 / 0
+</div>
+<div id="fileList"></div>
+</div>
+
+<!-- IMAGE -->
+<div id="viewer">
+<canvas id="canvas"></canvas>
+</div>
+
+</main>
+
+<footer>
+<div id="boxInfo">
+       No image loaded.
+</div>
+<div class="help">
+       Drag = draw • Drag inside box = move • White handles = resize • Delete = remove
+</div>
+</footer>
+
+<script>
+/* =========================================================
+  GLOBAL VARIABLES
+========================================================= */
+const canvas =
+   document.getElementById("canvas");
+const ctx =
+   canvas.getContext("2d");
+const folderInput =
+   document.getElementById("folderInput");
+const labelSelect =
+   document.getElementById("labelSelect");
+const fileList =
+   document.getElementById("fileList");
+const status =
+   document.getElementById("status");
+const progress =
+   document.getElementById("progress");
+const boxInfo =
+   document.getElementById("boxInfo");
+
+let files = [];
+let currentImageIndex = -1;
+let currentImage =
+   new Image();
+let imageLoaded = false;
+let scale = 1;
+
+/*
+   Current image's boxes
+*/
+let boxes = [];
+
+/*
+   Which box is selected
+*/
+let selectedBox = -1;
+
+/*
+   Mouse operation
+   null
+   draw
+   move
+   resize
+*/
+let mouseAction = null;
+
+/*
+   Resize handle being used
+   nw
+   n
+   ne
+   w
+   e
+   sw
+   s
+   se
+*/
+let resizeHandle = null;
+
+let startMouseX = 0;
+let startMouseY = 0;
+
+/*
+   All saved annotations are kept here.
+   Example:
+   savedAnnotations[0] = {
+       image: "image1.jpg",
+       annotations: [...]
+   }
+*/
+let savedAnnotations = {};
+
+const HANDLE_SIZE = 10;
+const MIN_BOX_SIZE = 5;
+
+/* =========================================================
+  SELECT IMAGE FOLDER
+========================================================= */
+folderInput.addEventListener(
+   "change",
+   function () {
+       files = [...folderInput.files]
+           .filter(
+               file =>
+                   file.type.startsWith("image/")
+           )
+           .sort(
+               (a, b) =>
+                   a.name.localeCompare(
+                       b.name,
+                       undefined,
+                       {
+                           numeric: true
+                       }
+                   )
+           );
+
+       savedAnnotations = {};
+       currentImageIndex = -1;
+
+       renderFileList();
+
+       if (files.length > 0) {
+           loadImage(0);
+       }
+   }
+);
+
+/* =========================================================
+  FILE LIST
+========================================================= */
+function renderFileList() {
+   fileList.innerHTML = "";
+
+   files.forEach(
+       (file, index) => {
+           const item =
+               document.createElement("div");
+
+           item.className =
+               "fileItem";
+
+           if (
+               index === currentImageIndex
+           ) {
+               item.classList.add(
+                   "active"
+               );
+           }
+
+           if (
+               savedAnnotations[index]
+           ) {
+               item.classList.add(
+                   "saved"
+               );
+           }
+
+           item.textContent =
+               `${index + 1}. ${file.name}`;
+
+           item.onclick =
+               function () {
+                   loadImage(index);
+               };
+
+           fileList.appendChild(item);
+       }
+   );
+
+   updateProgress();
+}
+
+/* =========================================================
+  PROGRESS
+========================================================= */
+function updateProgress() {
+   const total =
+       files.length;
+
+   const current =
+       currentImageIndex >= 0
+           ? currentImageIndex + 1
+           : 0;
+
+   const saved =
+       Object.keys(
+           savedAnnotations
+       ).length;
+
+   progress.textContent =
+       `${current} / ${total}    |    ${saved} saved`;
+}
+
+/* =========================================================
+  LOAD IMAGE
+========================================================= */
+function loadImage(index) {
+   if (
+       index < 0 ||
+       index >= files.length
+   ) {
+       return;
+   }
+
+   currentImageIndex =
+       index;
+
+   /*
+       If this image already has
+       annotations, restore them.
+   */
+   if (
+       savedAnnotations[index]
+   ) {
+       boxes =
+           JSON.parse(
+               JSON.stringify(
+                   savedAnnotations[index].annotations
+               )
+           );
+   }
+   else {
+       boxes = [];
+   }
+
+   selectedBox = -1;
+   mouseAction = null;
+   resizeHandle = null;
+   imageLoaded = false;
+
+   const file =
+       files[index];
+
+   const url =
+       URL.createObjectURL(file);
+
+   currentImage.onload =
+       function () {
+           imageLoaded = true;
+
+           URL.revokeObjectURL(
+               url
+           );
+
+           fitImageToScreen();
+
+           redraw();
+
+           status.textContent =
+               `Image ${index + 1} of ${files.length}: ${file.name}`;
+
+           updateProgress();
+
+           updateBoxInfo();
+       };
+
+   currentImage.src =
+       url;
+
+   renderFileList();
+}
+
+/* =========================================================
+  FIT IMAGE TO AVAILABLE SCREEN
+========================================================= */
+function fitImageToScreen() {
+   if (!imageLoaded) {
+       return;
+   }
+
+   const viewer =
+       document.getElementById(
+           "viewer"
+       );
+
+   const availableWidth =
+       viewer.clientWidth - 30;
+
+   const availableHeight =
+       viewer.clientHeight - 30;
+
+   scale =
+       Math.min(
+           availableWidth /
+               currentImage.naturalWidth,
+           availableHeight /
+               currentImage.naturalHeight,
+           1
+       );
+
+   canvas.width =
+       Math.round(
+           currentImage.naturalWidth *
+           scale
+       );
+
+   canvas.height =
+       Math.round(
+           currentImage.naturalHeight *
+           scale
+       );
+}
+
+window.addEventListener(
+   "resize",
+   function () {
+       if (imageLoaded) {
+           fitImageToScreen();
+           redraw();
+       }
+   }
+);
+
+/* =========================================================
+  MOUSE POSITION
+========================================================= */
+function getMousePosition(event) {
+   const rect =
+       canvas.getBoundingClientRect();
+
+   return {
+       x:
+           event.clientX -
+           rect.left,
+       y:
+           event.clientY -
+           rect.top
+   };
+}
+
+/* =========================================================
+  FIND BOX
+========================================================= */
+function findBox(x, y) {
+   for (
+       let i = boxes.length - 1;
+       i >= 0;
+       i--
+   ) {
+       const box =
+           boxes[i];
+
+       const bx =
+           box.x * scale;
+       const by =
+           box.y * scale;
+       const bw =
+           box.width * scale;
+       const bh =
+           box.height * scale;
+
+       if (
+           x >= bx &&
+           x <= bx + bw &&
+           y >= by &&
+           y <= by + bh
+       ) {
+           return i;
+       }
+   }
+
+   return -1;
+}
+
+/* =========================================================
+  RESIZE HANDLES
+========================================================= */
+function getHandles(box) {
+   const x =
+       box.x * scale;
+   const y =
+       box.y * scale;
+   const width =
+       box.width * scale;
+   const height =
+       box.height * scale;
+
+   return [
+       ["nw", x, y],
+       [
+           "n",
+           x + width / 2,
+           y
+       ],
+       [
+           "ne",
+           x + width,
+           y
+       ],
+       [
+           "w",
+           x,
+           y + height / 2
+       ],
+       [
+           "e",
+           x + width,
+           y + height / 2
+       ],
+       [
+           "sw",
+           x,
+           y + height
+       ],
+       [
+           "s",
+           x + width / 2,
+           y + height
+       ],
+       [
+           "se",
+           x + width,
+           y + height
+       ]
+   ];
+}
+
+/* =========================================================
+  FIND RESIZE HANDLE
+========================================================= */
+function findResizeHandle(
+   x,
+   y,
+   box
+) {
+   const handles =
+       getHandles(box);
+
+   for (
+       const handle of handles
+   ) {
+       const name =
+           handle[0];
+       const hx =
+           handle[1];
+       const hy =
+           handle[2];
+
+       if (
+           Math.abs(x - hx)
+<= HANDLE_SIZE &&
+           Math.abs(y - hy)
+<= HANDLE_SIZE
+       ) {
+           return name;
+       }
+   }
+
+   return null;
+}
+
+/* =========================================================
+  DRAW IMAGE + BOXES
+========================================================= */
+function redraw() {
+   if (!imageLoaded) {
+       return;
+   }
+
+   ctx.clearRect(
+       0,
+       0,
+       canvas.width,
+       canvas.height
+   );
+
+   ctx.drawImage(
+       currentImage,
+       0,
+       0,
+       canvas.width,
+       canvas.height
+   );
+
+   boxes.forEach(
+       drawBox
+   );
+}
+
+/* =========================================================
+  DRAW BOX
+========================================================= */
+function drawBox(
+   box,
+   index
+) {
+   const x =
+       box.x * scale;
+   const y =
+       box.y * scale;
+   const width =
+       box.width * scale;
+   const height =
+       box.height * scale;
+
+   /*
+       Blue = multimeter
+       Red = display
+   */
+   ctx.strokeStyle =
+       box.label === "multimeter"
+           ? "#00a8ff"
+           : "#ff4040";
+
+   ctx.lineWidth =
+       index === selectedBox
+           ? 3
+           : 2;
+
+   ctx.strokeRect(
+       x,
+       y,
+       width,
+       height
+   );
+
+   /* LABEL */
+   ctx.font =
+       "bold 13px Arial";
+
+   const labelWidth =
+       ctx.measureText(
+           box.label
+       ).width + 10;
+
+   ctx.fillStyle =
+       ctx.strokeStyle;
+
+   ctx.fillRect(
+       x,
+       Math.max(
+           0,
+           y - 20
+       ),
+       labelWidth,
+       20
+   );
+
+   ctx.fillStyle =
+       "white";
+
+   ctx.fillText(
+       box.label,
+       x + 5,
+       Math.max(
+           14,
+           y - 6
+       )
+   );
+
+   /* HANDLES */
+   if (
+       index === selectedBox
+   ) {
+       ctx.fillStyle =
+           "white";
+       ctx.strokeStyle =
+           "#111";
+       ctx.lineWidth = 1;
+
+       const handles =
+           getHandles(box);
+
+       handles.forEach(
+           handle => {
+               const hx =
+                   handle[1];
+               const hy =
+                   handle[2];
+
+               ctx.fillRect(
+                   hx -
+                   HANDLE_SIZE / 2,
+                   hy -
+                   HANDLE_SIZE / 2,
+                   HANDLE_SIZE,
+                   HANDLE_SIZE
+               );
+
+               ctx.strokeRect(
+                   hx -
+                   HANDLE_SIZE / 2,
+                   hy -
+                   HANDLE_SIZE / 2,
+                   HANDLE_SIZE,
+                   HANDLE_SIZE
+               );
+           }
+       );
+   }
+}
+
+/* =========================================================
+  MOUSE DOWN
+========================================================= */
+canvas.addEventListener(
+   "mousedown",
+   function (event) {
+       if (!imageLoaded) {
+           return;
+       }
+
+       const mouse =
+           getMousePosition(event);
+
+       startMouseX =
+           mouse.x;
+       startMouseY =
+           mouse.y;
+
+       /*
+           First check resize handle
+       */
+       if (
+           selectedBox >= 0
+       ) {
+           const handle =
+               findResizeHandle(
+                   mouse.x,
+                   mouse.y,
+                   boxes[selectedBox]
+               );
+
+           if (handle) {
+               mouseAction =
+                   "resize";
+               resizeHandle =
+                   handle;
+               return;
+           }
+       }
+
+       /*
+           Then check existing box
+       */
+       const boxIndex =
+           findBox(
+               mouse.x,
+               mouse.y
+           );
+
+       if (
+           boxIndex >= 0
+       ) {
+           selectedBox =
+               boxIndex;
+           mouseAction =
+               "move";
+
+           redraw();
+           updateBoxInfo();
+           return;
+       }
+
+       /*
+           Otherwise create new box
+       */
+       boxes.push({
+           label:
+               labelSelect.value,
+           x:
+               mouse.x / scale,
+           y:
+               mouse.y / scale,
+           width:
+               0,
+           height:
+               0
+       });
+
+       selectedBox =
+           boxes.length - 1;
+
+       mouseAction =
+           "draw";
+   }
+);
+
+/* =========================================================
+  MOUSE MOVE
+========================================================= */
+canvas.addEventListener(
+   "mousemove",
+   function (event) {
+       if (
+           !imageLoaded ||
+           selectedBox < 0 ||
+           !mouseAction
+       ) {
+           return;
+       }
+
+       const mouse =
+           getMousePosition(event);
+
+       const box =
+           boxes[selectedBox];
+
+       /*
+           DRAW NEW BOX
+       */
+       if (
+           mouseAction === "draw"
+       ) {
+           const startX =
+               startMouseX / scale;
+           const startY =
+               startMouseY / scale;
+           const currentX =
+               mouse.x / scale;
+           const currentY =
+               mouse.y / scale;
+
+           box.x =
+               Math.min(
+                   startX,
+                   currentX
+               );
+
+           box.y =
+               Math.min(
+                   startY,
+                   currentY
+               );
+
+           box.width =
+               Math.abs(
+                   currentX -
+                   startX
+               );
+
+           box.height =
+               Math.abs(
+                   currentY -
+                   startY
+               );
+       }
+
+       /*
+           MOVE BOX
+       */
+       else if (
+           mouseAction === "move"
+       ) {
+           box.x +=
+               (
+                   mouse.x -
+                   startMouseX
+               ) / scale;
+
+           box.y +=
+               (
+                   mouse.y -
+                   startMouseY
+               ) / scale;
+
+           startMouseX =
+               mouse.x;
+           startMouseY =
+               mouse.y;
+
+           clampBox(box);
+       }
+
+       /*
+           RESIZE BOX
+       */
+       else if (
+           mouseAction === "resize"
+       ) {
+           resizeBox(
+               box,
+               mouse.x,
+               mouse.y
+           );
+       }
+
+       redraw();
+       updateBoxInfo();
+   }
+);
+
+/* =========================================================
+  MOUSE UP
+========================================================= */
+window.addEventListener(
+   "mouseup",
+   function () {
+       if (
+           mouseAction === "draw" &&
+           selectedBox >= 0
+       ) {
+           const box =
+               boxes[selectedBox];
+
+           if (
+               box.width <
+                   MIN_BOX_SIZE ||
+               box.height <
+                   MIN_BOX_SIZE
+           ) {
+               boxes.pop();
+               selectedBox = -1;
+           }
+       }
+
+       mouseAction = null;
+       resizeHandle = null;
+
+       redraw();
+       updateBoxInfo();
+   }
+);
+
+/* =========================================================
+  RESIZE BOX
+========================================================= */
+function resizeBox(
+   box,
+   mouseX,
+   mouseY
+) {
+   const mouseXOriginal =
+       mouseX / scale;
+   const mouseYOriginal =
+       mouseY / scale;
+
+   const right =
+       box.x + box.width;
+   const bottom =
+       box.y + box.height;
+
+   switch (
+       resizeHandle
+   ) {
+       case "nw":
+           box.x =
+               Math.min(
+                   mouseXOriginal,
+                   right -
+                   MIN_BOX_SIZE
+               );
+           box.y =
+               Math.min(
+                   mouseYOriginal,
+                   bottom -
+                   MIN_BOX_SIZE
+               );
+           box.width =
+               right -
+               box.x;
+           box.height =
+               bottom -
+               box.y;
+           break;
+
+       case "n":
+           box.y =
+               Math.min(
+                   mouseYOriginal,
+                   bottom -
+                   MIN_BOX_SIZE
+               );
+           box.height =
+               bottom -
+               box.y;
+           break;
+
+       case "ne":
+           box.y =
+               Math.min(
+                   mouseYOriginal,
+                   bottom -
+                   MIN_BOX_SIZE
+               );
+           box.width =
+               Math.max(
+                   MIN_BOX_SIZE,
+                   mouseXOriginal -
+                   box.x
+               );
+           box.height =
+               bottom -
+               box.y;
+           break;
+
+       case "w":
+           box.x =
+               Math.min(
+                   mouseXOriginal,
+                   right -
+                   MIN_BOX_SIZE
+               );
+           box.width =
+               right -
+               box.x;
+           break;
+
+       case "e":
+           box.width =
+               Math.max(
+                   MIN_BOX_SIZE,
+                   mouseXOriginal -
+                   box.x
+               );
+           break;
+
+       case "sw":
+           box.x =
+               Math.min(
+                   mouseXOriginal,
+                   right -
+                   MIN_BOX_SIZE
+               );
+           box.width =
+               right -
+               box.x;
+           box.height =
+               Math.max(
+                   MIN_BOX_SIZE,
+                   mouseYOriginal -
+                   box.y
+               );
+           break;
+
+       case "s":
+           box.height =
+               Math.max(
+                   MIN_BOX_SIZE,
+                   mouseYOriginal -
+                   box.y
+               );
+           break;
+
+       case "se":
+           box.width =
+               Math.max(
+                   MIN_BOX_SIZE,
+                   mouseXOriginal -
+                   box.x
+               );
+           box.height =
+               Math.max(
+                   MIN_BOX_SIZE,
+                   mouseYOriginal -
+                   box.y
+               );
+           break;
+   }
+
+   clampBox(box);
+}
+
+/* =========================================================
+  KEEP BOX INSIDE IMAGE
+========================================================= */
+function clampBox(box) {
+   box.width =
+       Math.min(
+           box.width,
+           currentImage.naturalWidth
+       );
+
+   box.height =
+       Math.min(
+           box.height,
+           currentImage.naturalHeight
+       );
+
+   box.x =
+       Math.max(
+           0,
+           Math.min(
+               box.x,
+               currentImage.naturalWidth -
+               box.width
+           )
+       );
+
+   box.y =
+       Math.max(
+           0,
+           Math.min(
+               box.y,
+               currentImage.naturalHeight -
+               box.height
+           )
+       );
+}
+
+/* =========================================================
+  BOX INFORMATION
+========================================================= */
+function updateBoxInfo() {
+   if (
+       selectedBox < 0
+   ) {
+       boxInfo.textContent =
+           `${boxes.length} box(es)`;
+       return;
+   }
+
+   const box =
+       boxes[selectedBox];
+
+   boxInfo.textContent =
+       `${box.label} | ` +
+       `X: ${Math.round(box.x)} | ` +
+       `Y: ${Math.round(box.y)} | ` +
+       `W: ${Math.round(box.width)} | ` +
+       `H: ${Math.round(box.height)}`;
+}
+
+/* =========================================================
+  DELETE SELECTED
+========================================================= */
+document
+   .getElementById("deleteButton")
+   .onclick =
+   function () {
+       if (
+           selectedBox >= 0
+       ) {
+           boxes.splice(
+               selectedBox,
+               1
+           );
+           selectedBox = -1;
+           redraw();
+           updateBoxInfo();
+       }
+   };
+
+/* =========================================================
+  UNDO
+========================================================= */
+document
+   .getElementById("undoButton")
+   .onclick =
+   function () {
+       if (
+           boxes.length > 0
+       ) {
+           boxes.pop();
+           selectedBox = -1;
+           redraw();
+           updateBoxInfo();
+       }
+   };
+
+/* =========================================================
+  CLEAR
+========================================================= */
+document
+   .getElementById("clearButton")
+   .onclick =
+   function () {
+       if (
+           boxes.length === 0
+       ) {
+           return;
+       }
+
+       if (
+           confirm(
+               "Clear all boxes on this image?"
+           )
+       ) {
+           boxes = [];
+           selectedBox = -1;
+           redraw();
+           updateBoxInfo();
+       }
+   };
+
+/* =========================================================
+  PREVIOUS
+========================================================= */
+document
+   .getElementById("previousButton")
+   .onclick =
+   function () {
+       if (
+           currentImageIndex > 0
+       ) {
+           loadImage(
+               currentImageIndex - 1
+           );
+       }
+   };
+
+/* =========================================================
+  NEXT
+========================================================= */
+document
+   .getElementById("nextButton")
+   .onclick =
+   function () {
+       if (
+           currentImageIndex <
+           files.length - 1
+       ) {
+           loadImage(
+               currentImageIndex + 1
+           );
+       }
+   };
+
+/* =========================================================
+  SAVE CURRENT ANNOTATION
+========================================================= */
+function saveCurrentAnnotation() {
+   if (
+       !imageLoaded ||
+       currentImageIndex < 0
+   ) {
+       return false;
+   }
+
+   if (
+       boxes.length === 0
+   ) {
+       alert(
+           "Add at least one bounding box first."
+       );
+       return false;
+   }
+
+   const file =
+       files[currentImageIndex];
+
+   savedAnnotations[
+       currentImageIndex
+   ] = {
+       image:
+           file.name,
+       imageWidth:
+           currentImage.naturalWidth,
+       imageHeight:
+           currentImage.naturalHeight,
+       annotations:
+           JSON.parse(
+               JSON.stringify(
+                   boxes
+               )
+           )
+   };
+
+   renderFileList();
+   updateProgress();
+
+   status.textContent =
+       `Saved annotation for ${file.name}`;
+
+   return true;
+}
+
+/* =========================================================
+  SAVE
+========================================================= */
+document
+   .getElementById("saveButton")
+   .onclick =
+   function () {
+       saveCurrentAnnotation();
+   };
+
+/* =========================================================
+  SAVE & NEXT
+========================================================= */
+document
+   .getElementById("saveNextButton")
+   .onclick =
+   function () {
+       const saved =
+           saveCurrentAnnotation();
+
+       if (!saved) {
+           return;
+       }
+
+       if (
+           currentImageIndex <
+           files.length - 1
+       ) {
+           setTimeout(
+               function () {
+                   loadImage(
+                       currentImageIndex + 1
+                   );
+               },
+               100
+           );
+       }
+   };
+
+/* =========================================================
+  KEYBOARD SHORTCUTS
+========================================================= */
+document.addEventListener(
+   "keydown",
+   function (event) {
+       /*
+           Delete selected box
+       */
+       if (
+           event.key === "Delete"
+       ) {
+           document
+               .getElementById(
+                   "deleteButton"
+               )
+               .click();
+       }
+
+       /*
+           Escape = cancel current operation
+       */
+       if (
+           event.key === "Escape"
+       ) {
+           mouseAction = null;
+           resizeHandle = null;
+           redraw();
+       }
+
+       /*
+           S = Save
+       */
+       if (
+           event.key.toLowerCase() === "s" &&
+           !event.ctrlKey &&
+           !event.metaKey
+       ) {
+           document
+               .getElementById(
+                   "saveButton"
+               )
+               .click();
+       }
+   }
+);
+
+/* =========================================================
+  DOWNLOAD ALL
+========================================================= */
+document
+   .getElementById("downloadButton")
+   .onclick =
+   function () {
+       const indexes =
+           Object.keys(
+               savedAnnotations
+           );
+
+       if (
+           indexes.length === 0
+       ) {
+           alert(
+               "No annotations have been saved yet."
+           );
+           return;
+       }
+
+       /*
+           Create one JSON file containing
+           the entire annotation dataset.
+       */
+       const dataset = {
+           createdAt:
+               new Date().toISOString(),
+           totalImages:
+               files.length,
+           annotatedImages:
+               indexes.length,
+           classes: [
+               "multimeter",
+               "display"
+           ],
+           images:
+               indexes.map(
+                   index =>
+                       savedAnnotations[index]
+               )
+       };
+
+       const json =
+           JSON.stringify(
+               dataset,
+               null,
+               2
+           );
+
+       const blob =
+           new Blob(
+               [json],
+               {
+                   type:
+                       "application/json"
+               }
+           );
+
+       const url =
+           URL.createObjectURL(
+               blob
+           );
+
+       const link =
+           document.createElement("a");
+
+       link.href =
+           url;
+
+       link.download =
+           "multimeter_dataset_annotations.json";
+
+       document.body.appendChild(
+           link
+       );
+
+       link.click();
+
+       link.remove();
+
+       setTimeout(
+           function () {
+               URL.revokeObjectURL(
+                   url
+               );
+           },
+           1000
+       );
+
+       status.textContent =
+           `Downloaded ${indexes.length} annotations.`;
+   };
+</script>
+</body>
+</html>

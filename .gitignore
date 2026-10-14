@@ -1,0 +1,30 @@
+#Python Virtual Environment
+.venv/
+#Python cache
+__pycache__/
+#macOS'
+.DS_Store
+#Jupyter
+.ipynb_checkpoints/
+#Environment variables / secrets
+.env
+.env.*
+#ML training outputs
+runs/
+wandb/
+#Model Weights
+*.pt
+*.pth
+*.onnx
+#Private/raw datasets
+data/raw/
+#Preprocessed dataset
+data/processed/
+# Dataset files - keep local until sharing permission is confirmed
+dataset/labels/
+
+# Image review / annotation preview - review before publishing
+annotation_check.jpg
+
+#ignore entire dataset
+/dataset/
